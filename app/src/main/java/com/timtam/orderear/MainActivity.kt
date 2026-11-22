@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
@@ -13,17 +14,22 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * Order Ear: the order-taking page runs in a WebView, and Android's own
  * SpeechRecognizer feeds it what it hears (WebViews can't use the browser's
  * speech recognition). It restarts after every phrase so it keeps listening.
+ * Replies are spoken with the phone's built-in text-to-speech (free, on device);
+ * the mic pauses while it talks so it doesn't hear itself.
  */
 class MainActivity : Activity() {
     private lateinit var web: WebView
@@ -31,7 +37,11 @@ class MainActivity : Activity() {
     private var listening = false
     private var muted = false
     private val main = Handler(Looper.getMainLooper())
-    private val restart = Runnable { if (listening) listen() }
+    private val restart = Runnable { if (listening && !speaking) listen() }
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var speaking = false
+    private var utter = 0
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -47,12 +57,63 @@ class MainActivity : Activity() {
         web.addJavascriptInterface(Bridge(), "AndroidSpeech")
         setContentView(web)
         web.loadUrl("file:///android_asset/index.html")
+        tts = TextToSpeech(this) { status -> if (status == TextToSpeech.SUCCESS) main.post { setupVoice() } }
+    }
+
+    /** Pick the best Australian English voice that's already on the phone (no internet needed). */
+    private fun setupVoice() {
+        val t = tts ?: return
+        try {
+            t.language = Locale("en", "AU")
+            val voices = t.voices?.filter {
+                it.locale.language == "en" && !it.isNetworkConnectionRequired &&
+                    !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+            } ?: emptyList()
+            val best = voices.filter { it.locale.country == "AU" }.maxByOrNull { it.quality }
+                ?: voices.filter { it.locale.country == "GB" }.maxByOrNull { it.quality }
+            if (best != null) t.voice = best
+            t.setSpeechRate(1.05f)
+            t.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+        } catch (_: Exception) {}
+        t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { main.post { doneSpeaking() } }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) { main.post { doneSpeaking() } }
+            override fun onError(utteranceId: String?, errorCode: Int) { main.post { doneSpeaking() } }
+        })
+        ttsReady = true
+    }
+
+    private fun speakNow(text: String) {
+        val t = tts
+        if (!ttsReady || t == null) { state("spoke"); return }
+        speaking = true
+        state("speaking")
+        main.removeCallbacks(restart)
+        try { recognizer?.cancel() } catch (_: Exception) {}
+        t.speak(text, TextToSpeech.QUEUE_FLUSH, null, "oe" + (++utter))
+    }
+
+    private fun doneSpeaking() {
+        if (!speaking) return
+        speaking = false
+        state("spoke")
+        if (listening) restartSoon(300)
     }
 
     inner class Bridge {
         @JavascriptInterface fun available(): Boolean = SpeechRecognizer.isRecognitionAvailable(this@MainActivity)
         @JavascriptInterface fun start() { main.post { begin() } }
         @JavascriptInterface fun stop() { main.post { end() } }
+        @JavascriptInterface fun speak(text: String) { main.post { speakNow(text) } }
+        @JavascriptInterface fun hush() { main.post { tts?.stop(); doneSpeaking() } }
+        @JavascriptInterface fun hasVoice(): Boolean = ttsReady
     }
 
     private fun begin() {
@@ -105,7 +166,7 @@ class MainActivity : Activity() {
     private fun setMuted(on: Boolean) {
         if (on == muted) return
         val am = getSystemService(AUDIO_SERVICE) as AudioManager
-        for (stream in intArrayOf(AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM, AudioManager.STREAM_MUSIC)) {
+        for (stream in intArrayOf(AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM)) {
             try {
                 am.adjustStreamVolume(stream, if (on) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE, 0)
             } catch (_: Exception) {}
@@ -120,12 +181,13 @@ class MainActivity : Activity() {
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
-        override fun onPartialResults(b: Bundle?) { first(b)?.let { send(it, false) } }
+        override fun onPartialResults(b: Bundle?) { if (!speaking) first(b)?.let { send(it, false) } }
         override fun onResults(b: Bundle?) {
-            first(b)?.let { send(it, true) }
+            if (!speaking) first(b)?.let { send(it, true) }
             restartSoon(100)
         }
         override fun onError(error: Int) {
+            if (speaking) return
             when (error) {
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> { listening = false; setMuted(false); state("denied") }
                 SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
@@ -159,6 +221,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         super.onPause()
         if (listening) end()   // never keep the mic on when the app isn't on screen
+        tts?.stop(); speaking = false
     }
 
     override fun onDestroy() {
@@ -166,6 +229,7 @@ class MainActivity : Activity() {
         main.removeCallbacksAndMessages(null)
         setMuted(false)
         recognizer?.destroy()
+        tts?.shutdown()
         web.destroy()
         super.onDestroy()
     }
