@@ -324,7 +324,7 @@ function apply(text,order){
   const sz=sizeIn(s);if(sz&&(it.sized||last.meal)){last.size=sz;log.push(label(last))}
   if(/\b(meal|combo)\b/.test(s)&&it.meal&&!last.meal){last.meal=true;last.size=sz||last.size||'Medium';log.push('Made it a meal: '+label(last))}
   const md=modsIn(s);if(md.length){last.mods.push(...md.filter(x=>!last.mods.includes(x)));log.push(label(last)+': '+md.join(', '))}
-  if(log.length)last.uid=++uidc;else log.push('?');return log}
+  if(log.some(x=>x!=='Order complete'))last.uid=++uidc;else if(!log.length)log.push('?');return log}
  const added=[];let removing=false,pending=[];
  hits.forEach((h,i)=>{
   const it=h.it,pre=s.slice(i?hits[i-1].en:0,h.st),post=s.slice(h.en,hits[i+1]?hits[i+1].st:s.length);
@@ -378,71 +378,127 @@ function apply(text,order){
 const $=id=>document.getElementById(id);
 let order={lines:[],done:false},num=1,history=[];
 // ---- the counter voice ----
-const bot={on:true,lastQ:null,lastSorry:0,speaking:false,idleT:null,nextT:null};
+const bot={on:true,q:null,lastLine:'',lines:[],recent:[],spokeAt:0,speaking:false,idleT:null,nextT:null,lastSorry:0,upsold:false,askedAll:false};
 try{bot.on=localStorage.getItem('oe-voice')!=='off'}catch(e){}
 const pick=a=>a[Math.floor(Math.random()*a.length)];
+// never say the same phrase twice in a row: skip anything used in the last few lines
+function fresh(list){const ok=list.filter(x=>!bot.recent.includes(x));const c=pick(ok.length?ok:list);bot.recent.push(c);if(bot.recent.length>10)bot.recent.shift();return c}
+const P={
+ greet:["Hi, welcome to Macca's! What can I get for you today?","G'day, welcome to Macca's. What can I get started for you?","Hi there, welcome to Macca's. What would you like today?","Hi, how are you going? What can I get for you today?","Welcome to Macca's! What can I get you?"],
+ ack:['Sure,','No worries,','Too easy,','Yep,','Got it,','Lovely,','Beautiful,','Easy,'],
+ more:['Anything else?','Anything else for you today?','What else can I get you?','Can I get you anything else?','Was there anything else?','And anything else for you?'],
+ upsell:['Would you like to make that a large for a little extra?','Would you like to upsize that meal to a large?','Can I make that a large meal for you?'],
+ confirm:['Is that everything for today?','Is that all for today?','Have I got that all right?'],
+ noworries:['No worries.','No worries at all.','Too easy.','All good.','Not a problem.'],
+ thanks:['Thanks so much!','Thank you!','Lovely, thank you!','Perfect, thanks for that!','Awesome, thank you!'],
+ drive:["You're all good to drive on through to the next window.","You're all good to drive on through.","Just drive on through to the next window, thanks.","Head on through to the next window and we'll have that ready for you."],
+ removed:["No worries, I've taken that off.","Sure, that's off the order.","Done, that's been taken off.","Not a problem, I've removed that."],
+ bye:['No worries, have a great day!','Thanks, enjoy your meal!','Cheers, have a good one!','Enjoy, see you next time!'],
+ sorry:["Sorry, I didn't quite catch that. Could you say that again?","Sorry, could you say that one more time for me?","Sorry, I missed that. What was that?"],
+ wait:['Take your time!','No rush, take your time.','All good, take your time.']
+};
 const WORDS=['zero','a','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'];
-function clean(t){return String(t).replace(/&/g,'and').replace(/'N'/g,'n').replace(/[()]/g,'')}
+function clean(t){return String(t).replace(/&/g,'and').replace(/'N'/gi,'n').replace(/[()]/g,'')}
+function article(t){return /^[aeiou]/i.test(t)?'an':'a'}
 function spoken(l){const it=BY[l.id];let name=clean(it.name);
  if(l.pack)name=l.pack+' piece '+name;
  if(l.flav)name=l.flav+' '+name;
- let size=l.size&&((it.sized&&!l.meal)||(l.meal&&l.size!=='Medium'))?l.size.toLowerCase()+' ':'';
+ const size=l.size&&((it.sized&&!l.meal)||(l.meal&&l.size!=='Medium'))?l.size.toLowerCase()+' ':'';
  let txt=size+name+(l.meal?' meal':'');
  if(l.qty>1&&!/s$/i.test(txt)&&!it.drink)txt+='s';
- const q=l.qty===1?(/^[aeiou]/i.test(txt)?'an':'a'):(WORDS[l.qty]||String(l.qty));
- let out=q+' '+txt;
- if(l.drink)out+=' with '+(/^No drink/.test(l.drink)?'no drink':(/^[aeiou]/i.test(l.drink)?'an ':'a ')+clean(l.drink).toLowerCase());
- if(l.parts.length)out+=' with '+l.parts.map(p=>clean(p).toLowerCase()).join(' and ');
- const mods=l.mods.map(m=>m.replace(/^\+ /,'with ').toLowerCase()).map(clean);
+ let out=(l.qty===1?article(txt):(WORDS[l.qty]||String(l.qty)))+' '+txt;
+ if(l.drink)out+=' with '+(/^No drink/.test(l.drink)?'no drink':article(l.drink)+' '+clean(l.drink));
+ if(l.parts.length)out+=' with '+l.parts.map(clean).join(' and ');
+ const mods=l.mods.map(m=>clean(m.replace(/^\+ /,'with ')).toLowerCase());
  if(mods.length)out+=', '+mods.join(', ');
  return out}
 function listJoin(a){return a.length<2?(a[0]||''):a.slice(0,-1).join(', ')+' and '+a[a.length-1]}
 function readback(){return listJoin(order.lines.map(spoken))}
 function needDrink(){return order.lines.find(l=>(l.meal||l.id==='happy-meal')&&!l.drink)}
+function mealName(l){return clean(BY[l.id].name).replace(/ meal$/i,'')+' meal'}
+function words(t){return norm(t).trim().split(' ').filter(w=>w.length>1)}
+// ignore the phone hearing its own voice
+function isEcho(text){if(!bot.lines.length)return false;if(!bot.speaking&&Date.now()-bot.spokeAt>3500)return false;
+ const w=words(text);if(w.length<3)return false;const b=new Set(words(bot.lines.join(' ')));return w.filter(x=>b.has(x)).length/w.length>=0.7}
 function say(text){
+ bot.lastLine=text;bot.lines.push(text);if(bot.lines.length>2)bot.lines.shift();
  $('bot').textContent=text;$('bot').hidden=false;
  const li=document.createElement('li');li.className='botsay';li.textContent='🗣 '+text;$('log').prepend(li);
- if(!bot.on)return;
+ if(!bot.on){afterSpeak();return}
  if(NATIVE&&NATIVE.speak){bot.speaking=true;NATIVE.speak(text);return}
  if(window.speechSynthesis){bot.speaking=true;try{rec&&rec.abort()}catch(e){}
   const u=new SpeechSynthesisUtterance(text);u.lang='en-AU';u.rate=1.05;
   const v=speechSynthesis.getVoices().find(v=>/en[-_]AU/i.test(v.lang));if(v)u.voice=v;
-  u.onend=u.onerror=()=>{bot.speaking=false;if(listening&&rec)setTimeout(()=>{try{rec.start()}catch(e){}},200)};
-  speechSynthesis.cancel();speechSynthesis.speak(u)}
+  u.onend=u.onerror=()=>{bot.speaking=false;afterSpeak();if(listening&&rec)setTimeout(()=>{try{rec.start()}catch(e){}},500)};
+  speechSynthesis.cancel();speechSynthesis.speak(u)}else afterSpeak()
 }
-function greet(){bot.lastQ='anything';say(pick(["Hi, welcome to Macca's! What can I get for you today?","G'day, welcome to Macca's. What can I get started for you?","Hi there, welcome to Macca's. What would you like today?"]))}
-function askIfDone(){if(bot.lastQ==='anything'&&order.lines.length&&!bot.speaking){bot.lastQ='isthatall';say('Is that all for today?')}}
-function finish(){
- order.done=true;render();bot.lastQ='finished';
- say(pick(['Perfect, thanks so much!','Too easy, thank you!','Lovely, thanks for that!'])+' '+pick(["You're all good to drive on through.","You're all good to drive on through to the next window.","All good, just drive on through to the next window."]));
- clearTimeout(bot.nextT);bot.nextT=setTimeout(()=>{if(order.done)newOrder(false)},9000)}
-function newOrder(withGreet){clearTimeout(bot.nextT);clearTimeout(bot.idleT);order={lines:[],done:false};history=[];num++;$('log').innerHTML='';bot.lastQ=null;$('bot').hidden=true;render();if(withGreet)greet()}
-const YES=/\b(yes|yeah|yep|yup|yea|correct|thats right|that is right|sounds good|perfect|all good|sure|thats all|that is all|thats it|thats everything|done)\b/;
-const NO_MORE=/\b(no thanks|no thank you|nah|nope|no|thats all|thats it|thats everything|nothing else|im good|all good|im right)\b/;
-const WANT_MORE=/\b(no|nah|not yet|wait|hang on|actually|one more|also|and)\b/;
-function respond(text,log,before){
- const s=norm(text),miss=log.length===1&&log[0]==='?';
- const touched=order.lines.filter(l=>l.uid>before);
- const removed=log.some(x=>/^Removed|^−/.test(x));
- if(touched.length||removed){
-  let ack;
-  if(touched.length&&log.some(x=>/^(Added|\+\d)/.test(x)))ack=pick(['Sure, ','No worries, ','Too easy, ','Yep, ','Got it, '])+listJoin(touched.map(spoken))+'.';
-  else if(log.length===1&&/^Meal drink/.test(log[0])){const d=touched[0]&&touched[0].drink?clean(touched[0].drink):'';ack=pick(['Too easy, ','Lovely, ','No worries, ','Sure, '])+(/^[aeiou]/i.test(d)?'an ':'a ')+d+'.'}
-  else if(removed&&!touched.length)ack=pick(["No worries, I've taken that off.","Sure, that's off the order.","Done, I've removed that."]);
-  else ack=pick(["Sure, I've changed that for you.","No worries, all updated.","Done, I've fixed that up."]);
-  const nd=needDrink();
-  if(nd){bot.lastQ='drink';say(ack+' And what drink would you like with your '+clean(BY[nd.id].name).replace(/ meal$/i,'')+' meal?')}
-  else{bot.lastQ='anything';say(ack+' '+pick(['Anything else?','Anything else for you?','What else can I get you?','Can I get you anything else?']))}
-  clearTimeout(bot.idleT);bot.idleT=setTimeout(askIfDone,9000);return}
- if(!order.lines.length){if(miss&&s.trim().split(' ').length>1&&Date.now()-bot.lastSorry>15000){bot.lastSorry=Date.now();say("Sorry, I didn't quite catch that. What can I get for you?")}return}
- const q=bot.lastQ;
- if(q==='drink'&&/\b(no|nah|nope|no drink|no thanks)\b/.test(s)){const nd=needDrink();if(nd){nd.drink='No drink';nd.uid=++uidc;render()}bot.lastQ='anything';say('No worries, no drink. Anything else?');return}
- if((q==='confirm'||q==='isthatall')&&YES.test(s)&&!/\b(no|nah|actually|wait)\b/.test(s)){if(q==='isthatall'){order.done=true;render();bot.lastQ='finished';say(pick(['Perfect.','Lovely.','Too easy.'])+" So that's "+readback()+'. '+pick(["You're all good to drive on through.","You're all good to drive on through to the next window."]));clearTimeout(bot.nextT);bot.nextT=setTimeout(()=>{if(order.done)newOrder(false)},9000)}else finish();return}
- if(q==='isthatall'&&WANT_MORE.test(s)){bot.lastQ='anything';say(pick(['No worries, what else can I get for you?','Sure, what else would you like?']));return}
- if(q==='confirm'&&WANT_MORE.test(s)){bot.lastQ='anything';say(pick(["Sorry about that, what would you like to change?","No worries, what should I fix up?"]));return}
- if((q==='anything'||q==='drink'||q===null)&&(NO_MORE.test(s)||DONE.test(s))){bot.lastQ='confirm';clearTimeout(bot.idleT);say(pick(['No worries!','No worries at all.','Too easy.'])+" So that's "+readback()+'. Is that all for today?');return}
- if(miss&&s.trim().split(' ').length>1&&Date.now()-bot.lastSorry>15000){bot.lastSorry=Date.now();say(pick(["Sorry, I didn't quite catch that. Could you say that again?","Sorry, could you say that one more time?"]))}
+function afterSpeak(){bot.spokeAt=Date.now();if(bot.q==='anything')idle(9000)}
+function idle(ms){clearTimeout(bot.idleT);bot.idleT=setTimeout(()=>{if(bot.q==='anything'&&order.lines.length&&!bot.speaking&&!bot.askedAll){bot.askedAll=true;bot.q='isthatall';say('Is that all for today?')}},ms)}
+function greet(){bot.q='anything';say(fresh(P.greet))}
+function nextQ(){
+ const nd=needDrink();if(nd){bot.q='drink';return fresh([`And what drink would you like with your ${mealName(nd)}?`,'What drink would you like with that?',`And what would you like to drink with the ${mealName(nd)}?`])}
+ const up=!bot.upsold&&order.lines.find(l=>l.meal&&l.size==='Medium');if(up){bot.upsold=true;bot.upLine=up;bot.q='upsize';return fresh(P.upsell)}
+ bot.q='anything';return fresh(P.more)}
+function confirmOrder(){bot.q='confirm';clearTimeout(bot.idleT);say(fresh(P.noworries)+" So that's "+readback()+'. '+fresh(P.confirm))}
+function finish(withReadback){
+ order.done=true;render();bot.q='finished';clearTimeout(bot.idleT);
+ say((withReadback?fresh(['Perfect.','Lovely.','Too easy.'])+" So that's "+readback()+'. ':fresh(P.thanks)+' ')+fresh(P.drive));
+ clearTimeout(bot.nextT);bot.nextT=setTimeout(()=>{if(order.done)newOrder(false)},10000)}
+function newOrder(withGreet){clearTimeout(bot.nextT);clearTimeout(bot.idleT);order={lines:[],done:false};history=[];num++;$('log').innerHTML='';
+ Object.assign(bot,{q:null,upsold:false,askedAll:false});$('bot').hidden=true;render();if(withGreet)greet()}
+const YESW=/\b(yes|yeah|yep|yup|yea|ya|correct|thats right|that is right|sounds good|perfect|sure|ok|okay|please|go on then|why not|that will do|thatll do)\b/;
+const NOW=/\b(no|nah|nope|not yet|no thanks|no thank you|im ok|im okay)\b/;
+const FINISHED=/\b(thats it|thats all|thats everything|that is all|that is it|nothing else|all good|im good|im right|thats the lot|i think thats it|done)\b/;
+const MORE=/\b(actually|one more|also|wait|hang on|can i also|i also want|add)\b/;
+// what to do with one thing the customer said
+function handle(text){
+ const s=norm(text),hs=findItems(s),q=bot.q,has=re=>re.test(s);
+ if(!hs.length){
+  if(has(/\b(sorry|pardon|what was that|say that again|come again|repeat that|what did you say)\b/)&&bot.lastLine){say(bot.lastLine);return}
+  if(has(/\b(what (have|did) i (got|get|order)|read (it|that|my order|the order) back|repeat my order|whats my order|what was my order)\b/)){say(order.lines.length?"So far you've got "+readback()+'. '+nextQ():"There's nothing on the order yet. What can I get for you?");return}
+  if(has(/\b(hang on|give me a (sec|second|minute|moment)|one sec|just a sec|let me (think|see|have a look)|still deciding|just looking)\b/)){say(fresh(P.wait));clearTimeout(bot.idleT);return}
+  if(has(/\bhow (are|r) (you|ya)\b|\bhows it going\b|\bhow (you|ya) going\b|\bhows your day\b/)){say(fresh(["I'm good, thanks for asking!","Going well, thanks!","Not bad at all, thanks!"])+' '+(order.lines.length?fresh(P.more):'What can I get for you today?'));bot.q=order.lines.length?q:'anything';return}
+  if(has(/\b(how much|price|cost|total)\b/)){say('Your total will come up at the next window. '+(order.lines.length?fresh(P.more):'What can I get for you?'));return}
+  if(has(/\b(allergy|allergies|allergic|gluten|vegan|vegetarian|halal|nut free|dairy free|coeliac|celiac)\b/)){say("Good question. I'll grab one of the team to help you with that one.");return}
+  if(has(/\b(manager|real person|human|speak to someone|talk to someone)\b/)){say('No worries, one of the team will be right with you.');return}
+  if(has(/\b(recommend|whats good|specials?|whats new|any deals|deal)\b/)){bot.q='anything';say("The McRib's back for a limited time, or you can't go wrong with a Big Mac meal. What would you like?");return}
+  if(q==='finished'){if(has(/\b(thanks|thank you|cheers|ta)\b/))say(fresh(P.bye));return}
+  if(!order.lines.length&&has(/\b(hi|hello|hey|gday|good (morning|afternoon|evening)|can i order|can i get)\b/)&&!has(/\b(no|yes)\b/)){greet();return}
+  // answers to the question it just asked
+  if(q==='upsize'){const L=bot.upLine;if(YESW.test(s)&&!NOW.test(s)){if(L){L.size='Large';L.uid=++uidc;render(L.uid)}say(fresh(P.ack)+" I've made that a large. "+nextQ());return}
+   if(NOW.test(s)||FINISHED.test(s)){say(fresh(P.noworries)+' '+nextQ());return}}
+  if(q==='confirm'||q==='isthatall'){
+   if((YESW.test(s)||FINISHED.test(s))&&!NOW.test(s)&&!MORE.test(s)){finish(q==='isthatall');return}
+   if(NOW.test(s)||MORE.test(s)){bot.q='anything';bot.askedAll=false;say(q==='confirm'?fresh(["No worries, what would you like to change?","Sorry about that, what should I fix?"]):fresh(['No worries, what else can I get for you?','Sure, what else would you like?']));return}}
+  if(q==='anything'&&YESW.test(s)&&!NOW.test(s)&&!FINISHED.test(s)&&order.lines.length){say(fresh(['Sure, what else would you like?','Yep, what else can I get you?','Go for it, what would you like?']));return}
+  if(q==='drink'&&NOW.test(s)){const nd=needDrink();if(nd){nd.drink='No drink';nd.uid=++uidc;render(nd.uid)}say(fresh(['No worries, no drink.','Sure, no drink then.'])+' '+nextQ());return}
+ }
+ // the answer to "what drink would you like?"
+ const nd=needDrink();
+ if(q==='drink'&&nd&&hs.length===1&&hs[0].it.drink){snap();const it=hs[0].it,sz=sizeIn(s),md=modsIn(s.slice(hs[0].en));
+  nd.drink=(sz&&it.sized&&sz!==nd.size?sz+' ':'')+it.name+(md.length?' ('+md.join(', ').toLowerCase()+')':'');nd.uid=++uidc;
+  logLine(text,'Meal drink: '+it.name);render(nd.uid);say(fresh(P.ack)+' '+article(nd.drink)+' '+clean(nd.drink)+'. '+nextQ());return}
+ // anything else is an order change
+ snap();const before=uidc,count=order.lines.length,wasDone=order.done;
+ const log=apply(text,order);order.done=wasDone;
+ const touched=order.lines.filter(l=>l.uid>before),removed=order.lines.length<count||log.some(x=>/^Removed|^−/.test(x));
+ const miss=!touched.length&&!removed;
+ if(miss)history.pop();
+ logLine(text,miss?'No order change':log.filter(x=>x!=='Order complete').join(' · '));
+ render(Math.max(0,...order.lines.map(l=>l.uid)));
+ if(!miss){bot.askedAll=false;let ack;
+  const addedLines=touched.filter(l=>log.some(x=>/^(Added|\+\d)/.test(x)&&x.includes(label(l))));
+  if(addedLines.length>3)ack=fresh(P.ack)+" I've added those.";
+  else if(addedLines.length)ack=fresh(P.ack)+' '+listJoin(addedLines.map(spoken))+'.';
+  else if(removed&&!touched.length)ack=fresh(P.removed);
+  else if(touched.length)ack=fresh(['Sure,','No worries,','Done,'])+" that's "+listJoin(touched.map(spoken))+' now.';
+  else ack=fresh(P.noworries);
+  say(ack+' '+nextQ());return}
+ // nothing changed
+ if(order.lines.length&&(q==='anything'||q==='drink'||q===null||q==='upsize')&&(NOW.test(s)||FINISHED.test(s))){confirmOrder();return}
+ if(words(text).length>1&&Date.now()-bot.lastSorry>15000){bot.lastSorry=Date.now();say(fresh(P.sorry))}
 }
+function logLine(text,what){const li=document.createElement('li');li.innerHTML=`“${text.replace(/</g,'&lt;')}”<br><span class="${what==='No order change'?'miss':'act'}">${what.replace(/</g,'&lt;')}</span>`;$('log').prepend(li)}
 const SAMPLES=['Can I get a Big Mac meal with a Coke No Sugar and a 10 pack of nuggets with sweet and sour','Two cheeseburgers no pickles and a large fries','Actually make the fries small','Take the cheeseburgers off','A large oat flat white two sugars and an Oreo McFlurry','Happy Meal with nuggets and a Fanta',"That's it thanks"];
 $('chips').innerHTML=SAMPLES.map(t=>`<button type="button">${t}</button>`).join('');
 $('chips').addEventListener('click',e=>{if(e.target.tagName==='BUTTON')heard(e.target.textContent)});
@@ -464,19 +520,9 @@ $('lines').addEventListener('click',e=>{const b=e.target.closest('button');if(!b
 function snap(){history.push(JSON.stringify(order));if(history.length>40)history.shift()}
 function heard(text){
  if(!text.trim()||bot.speaking)return;
- clearTimeout(bot.idleT);snap();
- const before=uidc,wasDone=order.done;let log;
- const nd=needDrink(),hs=findItems(norm(text));
- if(bot.lastQ==='drink'&&nd&&hs.length===1&&hs[0].it.drink){const it=hs[0].it,seg=norm(text);const sz=sizeIn(seg);const md=modsIn(seg.slice(hs[0].en));nd.drink=(sz&&it.sized&&sz!==nd.size?sz+' ':'')+it.name+(md.length?' ('+md.join(', ').toLowerCase()+')':'');nd.uid=++uidc;log=['Meal drink: '+it.name]}
- else log=apply(text,order);
- order.done=wasDone;
- const miss=log.length===1&&log[0]==='?';
- if(miss)history.pop();
- const li=document.createElement('li');
- li.innerHTML=`“${text.replace(/</g,'&lt;')}”<br><span class="${miss?'miss':'act'}">${miss?'No order change':log.filter(x=>x!=='Order complete').join(' · ')||'—'}</span>`;
- $('log').prepend(li);
- render(Math.max(0,...order.lines.map(l=>l.uid)));
- respond(text,log,before);
+ if(isEcho(text)){logLine(text,'Ignored (heard its own voice)');return}
+ clearTimeout(bot.idleT);
+ handle(text);
 }
 $('typed').addEventListener('submit',e=>{e.preventDefault();heard($('say').value);$('say').value=''});
 $('undo').addEventListener('click',()=>{if(history.length){order=JSON.parse(history.pop());render()}});
@@ -493,9 +539,9 @@ const inApp=/; wv\)|FBAN|FBAV|Instagram|Claude/i.test(navigator.userAgent);
 let rec=null,listening=false,lastFinal='',lastFinalAt=0;
 const NATIVE=window.AndroidSpeech||null; // set by the Android app
 function finalText(t){t=(t||'').trim();const now=Date.now();if(t&&!(t===lastFinal&&now-lastFinalAt<3000)){lastFinal=t;lastFinalAt=now;heard(t)}}
-window.onNativeSpeech=(t,isFinal)=>{if(isFinal){finalText(t);$('live').innerHTML='<span class="interim">Listening…</span>'}else $('live').innerHTML=`<span class="interim">${String(t).replace(/</g,'&lt;')}</span>`};
-window.onNativeState=st=>{if(st==='speaking'){bot.speaking=true;return}if(st==='spoke'){bot.speaking=false;return}
- if(st==='listening'){listening=true;setMic();note('Listening. Speak normally, a phrase at a time.');if(!order.lines.length&&bot.lastQ===null)greet()}
+window.onNativeSpeech=(t,isFinal)=>{if(isFinal){finalText(t);$('live').innerHTML='<span class="interim">Listening…</span>'}else{clearTimeout(bot.idleT);$('live').innerHTML=`<span class="interim">${String(t).replace(/</g,'&lt;')}</span>`}};
+window.onNativeState=st=>{if(st==='speaking'){bot.speaking=true;return}if(st==='spoke'){bot.speaking=false;afterSpeak();return}
+ if(st==='listening'){listening=true;setMic();note('Listening. Speak normally, a phrase at a time.');if(!order.lines.length&&bot.q===null)greet()}
  else if(st==='stopped'){listening=false;setMic()}
  else if(st==='denied'){listening=false;setMic();note('Microphone permission was denied. Open Settings → Apps → Order Ear → Permissions → Microphone → Allow.',true)}
  else if(st.startsWith('error:'))note(st.slice(6),true)};
@@ -510,7 +556,7 @@ function makeRec(){
  rec=new SR();rec.lang='en-AU';rec.interimResults=true;rec.maxAlternatives=1;
  rec.continuous=!isAndroid; // Android Chrome repeats results in continuous mode, so restart after each phrase instead
  rec.onresult=e=>{let interim='';for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i],t=r[0].transcript.trim();
-   if(r.isFinal)finalText(t);else interim+=t+' '}
+   if(r.isFinal)finalText(t);else{interim+=t+' ';clearTimeout(bot.idleT)}}
   $('live').innerHTML=interim?`<span class="interim">${interim.replace(/</g,'&lt;')}</span>`:'<span class="interim">Listening…</span>'};
  rec.onend=()=>{if(listening&&!bot.speaking)setTimeout(()=>{if(listening&&!bot.speaking)try{rec.start()}catch(e){}},150)};
  rec.onerror=e=>{const m={'not-allowed':'Microphone permission is blocked. Tap the lock or tune icon next to the address bar → Permissions → Microphone → Allow, then reload.','service-not-allowed':'Speech recognition isn’t allowed here. '+OPEN_IN_CHROME,'audio-capture':'No microphone was found. Check one is plugged in and not used by another app.','network':'Speech recognition needs an internet connection (Chrome sends audio to Google to transcribe it).','language-not-supported':'Australian English isn’t available, switching to US English.'}[e.error];
@@ -532,7 +578,7 @@ $('mic').addEventListener('click',async()=>{
  if(!rec)makeRec();
  listening=true;setMic();note('Listening. Speak normally, a phrase at a time.');
  try{rec.start()}catch(e){}
- if(!order.lines.length&&bot.lastQ===null)greet();
+ if(!order.lines.length&&bot.q===null)greet();
  $('live').innerHTML='<span class="interim">Listening…</span>';
 });
 render();

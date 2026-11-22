@@ -104,7 +104,7 @@ class MainActivity : Activity() {
         if (!speaking) return
         speaking = false
         state("spoke")
-        if (listening) restartSoon(300)
+        if (listening) restartSoon(700)
     }
 
     inner class Bridge {
