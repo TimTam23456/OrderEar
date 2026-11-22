@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Order Ear</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: fast, practical counter tool — works mid-rush
+   IDEA: a POS screen on the left, the printed kitchen ticket on the right
+   PICTURE: the live ticket itself, filling as the customer talks
+   COLOUR and TYPE: charcoal console, paper ticket, one green "listening" accent; Archivo + Courier Prime for the ticket
+   LAYOUT: two columns, stacking to mic → ticket → log on phones */
+:root{--bg:#1b1d1f;--panel:#25282b;--line:#3a3e42;--ink:#f2f2ef;--mute:#9aa0a6;--go:#2fbf71;--stop:#e5484d;--paper:#fbfaf6;--pink:#1d1d1b}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Archivo,system-ui,sans-serif;overflow-x:clip}
+header{display:flex;align-items:center;gap:12px;padding:14px max(4vw,16px);border-bottom:1px solid var(--line)}
+h1{font-size:22px;margin:0;font-weight:800;letter-spacing:-.01em}
+.pill{margin-left:auto;font-size:13px;padding:4px 10px;border-radius:99px;background:var(--panel);color:var(--mute);border:1px solid var(--line)}
+.pill.on{color:#fff;background:var(--go);border-color:var(--go)}
+main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:24px;padding:20px max(4vw,16px);max-width:1240px;margin:auto}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+#mic{width:100%;min-height:120px;border:0;border-radius:14px;background:var(--go);color:#fff;font:800 24px Archivo,sans-serif;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:14px}
+#mic.on{background:var(--stop)}
+#mic svg{width:34px;height:34px}
+#mic.on .dot{animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){#mic.on .dot{animation:none}}
+#live{min-height:56px;margin:14px 0 4px;font-size:19px}
+#live .interim{color:var(--mute)}
+.note{color:var(--mute);font-size:14px;margin:4px 0 0}
+.note.bad{color:#ffb4a8;background:#3a2422;border:1px solid #6b3530;padding:10px 12px;border-radius:10px}
+.menu{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
+.menu summary{cursor:pointer;font-weight:700;min-height:44px;display:flex;align-items:center}
+.menu h4{margin:14px 0 6px;font-size:14px;color:var(--mute)}
+.mgrid{display:flex;flex-wrap:wrap;gap:6px}
+.mgrid button{font-weight:500;font-size:14px;min-height:38px;padding:0 12px}
+.mgrid small{color:#f5a524;font-size:11px}
+form{display:flex;gap:8px;margin-top:16px}
+input{flex:1;font:16px Archivo,sans-serif;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);min-height:44px}
+button{font:700 15px Archivo,sans-serif;min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:#33373b;color:var(--ink);cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid var(--go);outline-offset:2px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chips button{font-weight:500;font-size:14px;min-height:36px;border-radius:99px}
+h2{font-size:15px;margin:22px 0 8px;color:var(--mute);font-weight:700}
+#log{list-style:none;margin:0;padding:0;max-height:300px;overflow:auto;font-size:14px}
+#log li{padding:8px 0;border-top:1px solid var(--line)}
+#log .act{color:var(--go)}
+#log .miss{color:#f5a524}
+.ticket{background:var(--paper);color:var(--pink);font-family:'Courier Prime',monospace;border-radius:4px;padding:22px 20px 26px;box-shadow:0 18px 40px #0007;position:relative;align-self:start;position:sticky;top:16px}
+.ticket::after{content:"";position:absolute;left:0;right:0;bottom:-10px;height:10px;background:radial-gradient(circle at 10px -2px,transparent 9px,var(--paper) 10px) 0 0/20px 10px repeat-x}
+.ticket h3{text-align:center;margin:0;font-size:20px}
+.ticket .meta{text-align:center;font-size:13px;border-bottom:2px dashed #0004;padding-bottom:10px;margin-bottom:8px}
+#lines{list-style:none;margin:0;padding:0;min-height:160px}
+#lines li{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start;padding:8px 0;border-bottom:1px dotted #0003}
+#lines li.new{animation:flash 1.2s}
+@keyframes flash{from{background:#2fbf7140}}
+.q{font-weight:700;font-size:18px;white-space:nowrap}
+.n{font-weight:700;font-size:17px}
+.mods{display:block;font-weight:400;font-size:14px;color:#b0261f}
+.sub{display:block;font-weight:400;font-size:14px}
+.ctl{display:flex;gap:4px}
+.ctl button{min-height:36px;min-width:36px;padding:0;background:#ece9e0;color:#1d1d1b;border-color:#d6d2c6;font-family:Archivo}
+.empty{color:#0008;text-align:center;padding:50px 0}
+.tot{display:flex;justify-content:space-between;font-weight:700;margin-top:12px;font-size:16px}
+.done{text-align:center;margin-top:10px;font-weight:700;color:#137a42}
+.tools{display:flex;gap:8px;margin-top:18px}
+.tools button{flex:1;background:#1d1d1b;color:#fff;border:0;font-family:Archivo}
+@media(max-width:760px){main{grid-template-columns:minmax(0,1fr)}.ticket{position:relative;top:0}}
+</style>
+</head>
+<body>
+<header><h1>Order Ear</h1><span class="pill" id="status">Mic off</span></header>
+<main>
+<section>
+  <div class="panel">
+    <button id="mic" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/><circle class="dot" cx="20" cy="4" r="2" fill="currentColor" stroke="none"/></svg><span id="micLabel">Start listening</span></button>
+    <div id="live"><span class="interim">Tap the mic and read out an order…</span></div>
+    <p class="note" id="srNote">Works in Chrome or Edge. Tap the mic and allow microphone access when asked.</p>
+    <form id="typed"><input id="say" placeholder="Or type what the customer said" autocomplete="off"><button>Add</button></form>
+    <div class="chips" id="chips"></div>
+    <details class="menu"><summary>Menu (<span id="menuCount"></span> items). Tap to add</summary><div id="menuList"></div></details>
+    <h2>Heard</h2>
+    <ul id="log"></ul>
+  </div>
+</section>
+<aside class="ticket" aria-live="polite">
+  <h3>ORDER <span id="num">#001</span></h3>
+  <div class="meta" id="when"></div>
+  <ul id="lines"></ul>
+  <div class="tot"><span>Items</span><span id="count">0</span></div>
+  <div class="done" id="done" hidden>✔ Customer finished. Confirm at the till.</div>
+  <div class="tools"><button id="undo" type="button">Undo</button><button id="copy" type="button">Copy</button><button id="next" type="button">Next order</button></div>
+</aside>
+</main>
+<script>
+//PARSER-START
+// [name, flags, extra spoken aliases, pack sizes]  flags: M=can be a meal, S=has sizes, D=drink, C=sauce/condiment, H=happy-meal style host, L=limited time
+const MENU_SRC=[
+'Beef',
+['Big Mac','M','big mack|bigmac|big max|mac'],
+['Double Big Mac','M','double big mack|double mac'],
+['Quarter Pounder','M','qp|quarter pounder with cheese|quarter pounders'],
+['Double Quarter Pounder','M','double qp|dqp|double quarter'],
+['Quarter Pounder Deluxe','M','qp deluxe|deluxe quarter pounder|deluxe qp'],
+['Double Quarter Pounder Deluxe','M','double qp deluxe|double deluxe quarter pounder'],
+['Quarter Pounder BBQ Bacon & Crispy Onions','M','bbq bacon quarter pounder|qp bbq bacon|bbq quarter pounder|quarter pounder bbq|bbq bacon and crispy onions|bbq bacon crispy onion'],
+['Double Quarter Pounder BBQ Bacon & Crispy Onions','M','double bbq bacon quarter pounder|double qp bbq bacon|double bbq quarter pounder|double quarter pounder bbq'],
+['Big Arch','M','big arch burger|arch'],
+['Cheeseburger','M','cheese burger|cheesy burger'],
+['Double Cheeseburger','M','double cheese burger|double cheese|dcb'],
+['Triple Cheeseburger','M','triple cheese burger|triple cheese'],
+['Hamburger','M','ham burger|plain burger'],
+['McRib','ML','mc rib|mac rib'],
+['McRib Deluxe','ML','mc rib deluxe|mac rib deluxe|deluxe mcrib'],
+'Chicken & Fish',
+['McChicken','M','mc chicken|mac chicken|mcchickens'],
+['Double McChicken','M','double mc chicken|double mac chicken'],
+['McSpicy','M','mc spicy|mac spicy|spicy chicken burger|spicy burger'],
+['McCrispy','M','mc crispy|mac crispy|crispy chicken burger'],
+['McCrispy Deluxe','M','mc crispy deluxe|mac crispy deluxe|deluxe mccrispy|deluxe mc crispy'],
+["Chicken 'n' Cheese",'M','chicken and cheese|chicken cheese|chicken n cheese burger|chicken and cheese burger'],
+['Filet-O-Fish','M','fillet o fish|fillet of fish|filet of fish|fish burger|filet fish|fish fillet|fish'],
+['Double Filet-O-Fish','M','double fillet o fish|double fillet of fish|double filet of fish|double fish'],
+['Classic Chicken McWrap','M','chicken mcwrap|chicken mc wrap|classic mcwrap|classic wrap|chicken wrap|mcwrap|mc wrap'],
+['Spicy Chicken McWrap','M','spicy mcwrap|spicy mc wrap|spicy wrap|spicy chicken wrap'],
+['Crispy Chicken Snack Wrap','','snack wrap|crispy snack wrap|chicken snack wrap'],
+['Chicken McNuggets','M','mcnuggets|mc nuggets|chicken nuggets|nuggets|nugget|nuggies|nugs',[3,6,10,20,40]],
+['Spicy Chicken McNuggets','M','spicy mcnuggets|spicy nuggets|spicy nugget|spicy mc nuggets',[6,10,20,40]],
+['Half & Half Spicy McNuggets','M','half and half nuggets|half half nuggets|half and half spicy nuggets|half spicy nuggets|half and half mcnuggets',[6,10,20,40]],
+['Chicken McWings','M','mcwings|mc wings|wings|wing|chicken wings',[3,5]],
+'Breakfast',
+['Bacon & Egg McMuffin','M','egg mcmuffin|bacon egg mcmuffin|bacon and egg muffin|bacon egg muffin|bacon and egg mc muffin|mcmuffin|mc muffin|bacon muffin'],
+['Double Bacon & Egg McMuffin','M','double bacon and egg muffin|double bacon egg mcmuffin|double bacon muffin'],
+['Deluxe Bacon & Egg McMuffin','M','deluxe bacon and egg muffin|deluxe bacon egg mcmuffin|deluxe bacon muffin'],
+['Sausage McMuffin','M','sausage muffin|sausage mc muffin|plain sausage mcmuffin'],
+['Double Sausage McMuffin','M','double sausage muffin'],
+['Sausage & Egg McMuffin','M','sausage egg mcmuffin|sausage and egg muffin|sausage egg muffin|sausage and egg mc muffin'],
+['Double Sausage & Egg McMuffin','M','double sausage and egg muffin|double sausage egg mcmuffin|double sausage egg muffin'],
+['Deluxe Sausage & Egg McMuffin','M','deluxe sausage and egg muffin|deluxe sausage egg mcmuffin|deluxe sausage muffin'],
+['Mighty McMuffin','M','mighty muffin|mighty mc muffin|mighty'],
+['Deluxe Mighty McMuffin','M','deluxe mighty muffin|deluxe mighty'],
+['Chicken McMuffin','M','chicken muffin|chicken mc muffin'],
+['Chicken & Bacon McMuffin','M','chicken and bacon muffin|chicken bacon mcmuffin|chicken bacon muffin'],
+['Birdie Bacon & Egg McMuffin','ML','birdie bacon and egg|birdie bacon egg mcmuffin|birdie bacon muffin|birdie mcmuffin'],
+['Birdie Sausage & Egg McMuffin','ML','birdie sausage and egg|birdie sausage egg mcmuffin|birdie sausage muffin'],
+['Birdie Chicken & Bacon McMuffin','ML','birdie chicken and bacon|birdie chicken muffin'],
+['Birdie Brekkie McWrap','ML','birdie brekkie wrap|birdie wrap|birdie breakfast wrap'],
+['Brekkie McWrap','M','brekkie wrap|breakfast wrap|brekkie mc wrap|breakfast mcwrap'],
+['Deluxe Brekkie McWrap','M','deluxe brekkie wrap|deluxe breakfast wrap'],
+['Mega Brekkie McWrap','M','mega brekkie wrap|mega breakfast wrap|mega wrap'],
+['Big Brekkie Burger','M','big breakfast burger|brekkie burger|breakfast burger'],
+['Hotcakes','','hot cakes|hotcakes with butter and syrup|pancakes|hot cake'],
+['Ham & Cheese Pocket','','ham and cheese|ham cheese pocket|cheese pocket|pocket'],
+['Hash Brown','','hashbrown|hash browns|hashbrowns|hash'],
+['The Big Breakfast Deal','','big breakfast deal|big breakfast|brekkie deal|breakfast deal'],
+["Birdie's Brekkie Meal",'L','birdies brekkie meal|birdie meal|birdies meal|birdie brekkie meal|birdie breakfast meal'],
+'Sides',
+['Fries','S','fry|chips|french fries|hot chips|frys'],
+['Apple Slices','','apple slice|apples|sliced apple'],
+['Berry McPops','','berry mc pops|berry pops'],
+['Biscoff McPops','','biscoff mc pops|biscoff pops'],
+['Choc McPops','','choc mc pops|choc pops|chocolate mcpops|chocolate pops|mcpops|mc pops'],
+['Hot Apple Pie','','apple pie|apple pies|pie|pies'],
+['McDonaldland Cookies','','mcdonaldland cookie|cookies|mcdonald land cookies'],
+'Happy Meal & Bundles',
+['Happy Meal','H','happy meals|kids meal|kids meals'],
+["Macca's Mega Meal",'H','mega meal|maccas mega meal'],
+["Macca's Bundle for 4",'H','bundle for 4|bundle for four|family bundle|bundle'],
+['The Friends Meal','H','friends meal'],
+['Home Alone Meal','HL','home alone meal|home alone'],
+'Desserts',
+['Oreo McFlurry','','oreo mc flurry|oreo flurry|oreo cookie mcflurry|oreo cookies mcflurry|oreo'],
+["M&M's Minis McFlurry",'','m and m mcflurry|m and ms mcflurry|m and m flurry|m and ms flurry|mm mcflurry|m and m minis mcflurry|m and ms minis mcflurry|m and m|m and ms'],
+['Tim Tam & Jatz McFlurry','L','tim tam mcflurry|tim tam and jatz mcflurry|tim tam jatz mcflurry|tim tam flurry|tim tam'],
+['McFlurry','','mc flurry|mac flurry|flurry'],
+['Plain Sundae','S','sundae|sunday|plain sunday|vanilla sundae'],
+['Caramel Sundae','S','caramel sunday'],
+['Hot Fudge Sundae','S','hot fudge sunday|fudge sundae|fudge sunday|chocolate sundae|choc sundae'],
+['Strawberry Sundae','S','strawberry sunday'],
+['Soft Serve Cone','','cone|ice cream cone|soft serve|ice cream|vanilla cone|cones'],
+['Cone with Flake','','flake cone|cone with a flake|soft serve with flake|flake'],
+['Twin Twist Cone','','twin twist soft serve|twin twist cone|twist cone'],
+['Chocolate Soft Serve Cone','','chocolate cone|choc cone|chocolate soft serve'],
+['Affogato','',''],
+['Hazelnut Affogato','',''],
+['Birthday Cake','','ice cream cake|birthday cake'],
+'McCafé',
+['Cappuccino','SD','cappucino|cap|capp|cappuccinos|cappa'],
+['Flat White','SD','flatwhite|flat whites'],
+['Latte','SD','lattes|cafe latte'],
+['Long Black','SD','americano|black coffee|long blacks'],
+['Espresso','D','short black|espresso shot'],
+['Macchiato','D','short macchiato|long macchiato'],
+['Mocha','SD','mochaccino|cafe mocha'],
+['Hot Chocolate','SD','hot choc|hot chocolates'],
+['Babyccino','D','baby chino|babycino|babychino|baby cino'],
+['Chai Latte','SD','chai|chai tea latte'],
+['Piccolo Latte','D','piccolo'],
+['Matcha Latte','SD','matcha|hot matcha'],
+['Iced Latte','SD','ice latte|iced lattes'],
+['Iced Long Black','SD','ice long black|iced americano|iced black coffee'],
+['Iced Mocha','SD','ice mocha'],
+['Iced Chai Latte','SD','iced chai|ice chai'],
+['Iced Chocolate','SD','ice chocolate|iced choc'],
+['Iced Coffee','SD','ice coffee'],
+['Deluxe Caramel Iced Coffee','SD','caramel iced coffee|deluxe caramel iced coffee|caramel ice coffee|deluxe caramel flavoured iced coffee'],
+['Deluxe Hazelnut Iced Coffee','SD','hazelnut iced coffee|hazelnut ice coffee|deluxe hazelnut flavoured iced coffee'],
+['Deluxe Vanilla Iced Coffee','SD','vanilla iced coffee|vanilla ice coffee|deluxe vanilla flavoured iced coffee'],
+['Iced Matcha Latte','SD','iced matcha|ice matcha'],
+['Iced Strawberry Matcha Latte','SD','strawberry matcha|iced strawberry matcha'],
+['Iced Vanilla Matcha','SD','vanilla matcha|iced vanilla matcha latte'],
+['Iced Tiramisu Latte','SD','tiramisu latte|tiramisu'],
+['Iced Golden Caramel Latte','SD','golden caramel latte|golden caramel'],
+['Brown Sugar Shaken Espresso','SD','brown sugar espresso|shaken espresso|brown sugar shaken espresso with oat milk'],
+['Strawberry Watermelon Refresher','SD','strawberry watermelon|watermelon refresher'],
+['Popping Mango Refresher','SD','mango refresher|popping mango'],
+['Berry Blast & Sprite','SD','berry blast|berry blast sprite|berry sprite'],
+['Popping Green Apple & Sprite','SD','green apple sprite|popping green apple|green apple'],
+['Red Bull Strawberries & Cream Energiser','SD','strawberries and cream energiser|strawberries and cream red bull|strawberries and cream energizer|strawberries and cream'],
+['Red Bull Zero Strawberries & Cream Energiser','SD','zero strawberries and cream|sugar free strawberries and cream'],
+['Red Bull Dragonberry Energiser','SD','dragonberry|dragon berry|dragonberry energiser|dragonberry energizer|dragonberry red bull'],
+['Choc Coconut Frappe','SD','choc coconut frappe|chocolate coconut frappe|coconut frappe'],
+['Strawberry Shortcake Frappe','SDL','strawberry shortcake|shortcake frappe'],
+['Coffee Frappe','SD','frappe|frappes|coffee frappes'],
+['Chocolate Frappe','SD','choc frappe|chocolate frappes'],
+['English Breakfast Tea','SD','english breakfast|tea|cup of tea|black tea|normal tea|breakfast tea'],
+['Earl Grey Tea','SD','earl grey'],
+['Green Tea','SD',''],
+['Peppermint Tea','SD','peppermint|mint tea'],
+['Apple Crumble Muffin','','apple muffin|apple crumble'],
+['Double Choc Muffin','','choc muffin|chocolate muffin|double chocolate muffin'],
+['Banana Bread','','banana bread with butter|banana loaf'],
+['Raisin Toast','','raisin toast with butter|fruit toast'],
+'Drinks & Shakes',
+['Coke','SD','coca cola|cola|coke classic|regular coke|cokes'],
+['Coke No Sugar','SD','coke zero|coke zero sugar|coca cola zero sugar|no sugar coke|diet coke|zero coke|coke no sugars|coke zero sugars'],
+['Coke Vanilla','SD','vanilla coke|coca cola vanilla'],
+['Sprite','SD','lemonade|sprites'],
+['Sprite Zero Sugar','SD','sprite zero|sprite no sugar|diet sprite|zero sprite'],
+['Fanta Orange','SD','fanta|orange fanta|fantas'],
+['Fanta Raspberry','SD','raspberry fanta|raspberry'],
+['Kirks Lemon Lime & Bitters','SD','lemon lime and bitters|lemon lime bitters|llb|lime and bitters|lemon lime n bitters|kirks'],
+['Frozen Coke','SD','frozen cola|slushie|slushy|frozen cokes'],
+['Frozen Coke Zero Sugar','SD','frozen coke no sugar|frozen coke zero|frozen zero|frozen diet coke'],
+['Frozen Fanta Mango','SD','frozen mango|frozen fanta|mango frozen fanta|frozen fanta mango with popping pearls'],
+['Orange Juice','SD','oj|juice|orange juices'],
+['Water','D','bottle of water|bottled water|waters|still water'],
+['Sparkling Water','D','soda water|sparkling'],
+['Pop Tops Juice','D','pop tops|poptops|pop top|juice box'],
+['Lemon Flavour Drink','SD','lemon drink'],
+['Red Bull','D','redbull|red bull energy drink|energy drink'],
+['Red Bull Zero Sugar','D','red bull zero|sugar free red bull|red bull sugar free|redbull zero'],
+['Chocolate Shake','S','chocolate thickshake|chocolate milkshake|choc shake|choc thickshake|chocolate thick shake'],
+['Strawberry Shake','S','strawberry thickshake|strawberry milkshake|strawberry thick shake'],
+['Vanilla Shake','S','vanilla thickshake|vanilla milkshake|vanilla thick shake'],
+['Caramel Shake','S','caramel thickshake|caramel milkshake|caramel thick shake'],
+['Thickshake','S','thick shake|milkshake|shake|shakes|thickshakes|milkshakes'],
+'Sauces',
+['BBQ Sauce','C','barbeque sauce|barbecue sauce|bbq'],
+['Big Mac Special Sauce','C','big mac sauce|mac sauce|special sauce'],
+['Ketchup','C','tomato sauce|sauce'],
+['McChicken Sauce','C','mc chicken sauce|mac chicken sauce'],
+['Sweet Mustard Sauce','C','sweet mustard|mustard sauce|honey mustard|mustard'],
+['Ranch Sauce','C','ranch'],
+['Spicy Buffalo Sauce','C','buffalo sauce|buffalo|spicy buffalo'],
+["Sweet 'N' Sour Sauce",'C','sweet and sour|sweet n sour|sweet sour|sweet and sour sauce'],
+['Tartare Sauce','C','tartar sauce|tartar|tartare'],
+['Aioli Sauce','C','aioli'],
+['Hotcake Syrup','C','syrup|maple syrup'],
+['Whipped Butter','C','butter'],
+];
+const FLAV=[['oreo','Oreo'],['m and ms?','M&M'],['tim tam','Tim Tam'],['caramel','Caramel'],['chocolate|choc','Chocolate'],['strawberry','Strawberry'],['vanilla','Vanilla'],['hot fudge|fudge','Hot Fudge']];
+const ING='mac sauce|big mac sauce|tomato sauce|bbq sauce|special sauce|crispy onions?|pickles?|onions?|cheese|lettuce|tomato|mayo|bacon|ice|mustard|ketchup|salt|patty|patties|egg|butter|syrup|sugar|milk|cream|whipped cream|cold foam|ranch|slaw|sauce|drizzle|foam|chocolate|caramel|flake|cinnamon|sprinkles|seasoning';
+const NUM={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,fifteen:15,twenty:20,thirty:30,forty:40,couple:2};
+const SIZES={small:'Small',smalls:'Small',medium:'Medium',mediums:'Medium',regular:'Medium',large:'Large',larges:'Large',upsize:'Large',upsized:'Large'};
+function norm(t){return ' '+String(t).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[®™]/g,'').replace(/&/g,' and ').replace(/['’]/g,'').replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim()+' '}
+function autoA(name){const b=norm(name).trim(),o=new Set([b]);o.add(b.replace(/\bmc(?=[a-z])/g,'mc '));o.add(b.replace(/\bmc(?=[a-z])/g,'mac'));o.add(b.replace(/\bmc(?=[a-z])/g,'mac '));o.add(b.replace(/ and /g,' '));return [...o]}
+const esc=t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+let cat='';const MENU=[];
+for(const e of MENU_SRC){if(typeof e==='string'){cat=e;continue}const [name,f,extra,packs]=e;MENU.push({id:norm(name).trim().replace(/ /g,'-'),name,cat,meal:f.includes('M'),sized:f.includes('S'),drink:f.includes('D'),cond:f.includes('C'),host:f.includes('H'),lto:f.includes('L'),packs,a:[...new Set([...autoA(name),...(extra?extra.split('|').map(x=>norm(x).trim()):[])])]})}
+const BY=Object.fromEntries(MENU.map(m=>[m.id,m]));
+const seenA=new Set();const ALIASES=[];
+for(const it of MENU)for(const t of it.a)if(t&&!seenA.has(t)){seenA.add(t);ALIASES.push({t,it,re:new RegExp('(?<=\\s)'+esc(t).replace(/ /g,'\\s')+'(?:s|es)?(?=\\s)','g')})}
+ALIASES.sort((x,y)=>y.t.length-x.t.length);
+function findItems(s){const taken=[],hits=[];for(const al of ALIASES){al.re.lastIndex=0;let m;while((m=al.re.exec(s))){const st=m.index,en=st+m[0].length;if(taken.some(([x,y])=>st<y&&en>x))continue;taken.push([st,en]);hits.push({it:al.it,st,en})}}return hits.sort((x,y)=>x.st-y.st)}
+function nums(str){return str.trim().split(' ').map(w=>/^\d+$/.test(w)?+w:NUM[w]).filter(n=>n!=null)}
+function sizeIn(str){const m=str.match(/\b(smalls?|mediums?|regular|larges?|upsized?)\b/g);return m?SIZES[m[m.length-1]]:null}
+function modsIn(str){const out=[];const re=new RegExp('\\b(no|without|hold the|extra|light|less|add|with extra|more|double|heaps of)\\s+(?:the\\s+|of\\s+)?('+ING+')\\b','g');let m;
+ while((m=re.exec(str))){const w=m[1];const v=/without|hold/.test(w)?'NO':/with extra|more|heaps|double/.test(w)?'EXTRA':w;out.push(v.toUpperCase()+' '+m[2].toUpperCase())}
+ if(/\bplain\b/.test(str))out.push('PLAIN');
+ const milk=str.match(/\b(skim|skinny|soy|oat|almond|lactose free|full cream|light)\s+milk\b|\b(skim|skinny|soy|oat|almond|lactose free)\b/);if(milk){out.push(((milk[1]||milk[2]).replace('skinny','skim')).toUpperCase()+' MILK')}
+ const sh=str.match(/\b(extra|double|triple|one extra|1 extra) shots?\b/);if(sh)out.push(sh[1]==='triple'?'TRIPLE SHOT':'EXTRA SHOT');
+ if(/\bdecaf\b/.test(str))out.push('DECAF');
+ const su=str.match(/\b(one|two|three|four|1|2|3|4|half a?) sugars?\b/);if(su)out.push((NUM[su[1]]||su[1]).toString().toUpperCase()+' SUGAR');
+ for(const [re2,v] of [[/\bextra hot\b/,'EXTRA HOT'],[/\b(strong|extra strong)\b/,'STRONG'],[/\b(weak|half strength)\b/,'WEAK'],[/\bwith cold foam\b/,'COLD FOAM'],[/\bwell done\b/,'WELL DONE'],[/\bfresh\b/,'MADE FRESH'],[/\bcut in half\b/,'CUT IN HALF'],[/\btwin twist\b/,'TWIN TWIST'],[/\bchocolate soft serve\b/,'CHOC SOFT SERVE'],[/\bno salt\b/,'NO SALT']])if(re2.test(str)&&!out.includes(v))out.push(v);
+ return [...new Set(out)]}
+function flavIn(str){for(const [re,v] of FLAV)if(new RegExp('\\b('+re+')\\b').test(str))return v;return null}
+const REMOVE=/\b(remove|cancel|scratch|delete|take off|take away|get rid of|no more|dont want|dont need|forget|minus|drop)\b/;
+const CHANGE=/\b(make|change|upsize|switch|turn|swap)\b/;
+const DONE=/\b(thats it|thats all|thats everything|nothing else|thatll be all|that will be all|thats the lot|im done|all good thanks|thats about it)\b/;
+const CONJ=/\b(?:and|also|plus|with|then|thanks|thank you|please|um|uh|oh|actually)\b/;
+const PRE_MOD=/\b(no|without|hold the|extra|light|less|with extra|more|heaps of)\s*(?:the\s*)?$/;
+let uidc=0;
+function same(a,b){return a.id===b.id&&a.size===b.size&&!!a.meal===!!b.meal&&a.pack===b.pack&&a.flav===b.flav&&!a.drink&&!b.drink&&!a.parts.length&&!b.parts.length&&!BY[a.id].host&&a.mods.join()===b.mods.join()}
+function addLine(order,l,log){l.parts=l.parts||[];l.mods=l.mods||[];const ex=order.lines.find(x=>same(x,l));if(ex){ex.qty+=l.qty;ex.uid=++uidc;log.push('+'+l.qty+' '+label(ex));return ex}l.uid=++uidc;order.lines.push(l);log.push('Added '+l.qty+'× '+label(l));return l}
+function label(l){const it=BY[l.id];return [l.size&&(it.sized||l.meal)?l.size:'',l.pack?l.pack+'pc':'',l.flav||'',it.name,l.meal?'Meal':''].filter(Boolean).join(' ')}
+function newLine(it,o){const L={id:it.id,qty:1,size:null,meal:false,pack:null,flav:null,mods:[],parts:[],drink:null,...o};if((it.sized||L.meal)&&!L.size)L.size='Medium';if(it.packs&&!L.pack)L.pack=it.packs.includes(6)?6:it.packs[0];return L}
+function apply(text,order){
+ const s=norm(text),hits=findItems(s),log=[];const last=order.lines[order.lines.length-1];
+ if(DONE.test(s)){order.done=true;log.push('Order complete')}
+ if(!hits.length){
+  if(!last){if(!log.length)log.push('?');return log}
+  const it=BY[last.id];
+  if(REMOVE.test(s)||/\bnever ?mind\b/.test(s)){order.lines.pop();log.push('Removed '+label(last));return log}
+  if(/\b(another|one more|same again)\b/.test(s)){last.qty++;log.push('+1 '+label(last))}
+  const n=nums(s.replace(/\b(a|an)\b/g,''));if(/\b(make (it|that|them)|actually)\b/.test(s)&&n.length&&n[0]<20&&!/\bsugar/.test(s)){last.qty=n[0];log.push(n[0]+'× '+label(last))}
+  const sz=sizeIn(s);if(sz&&(it.sized||last.meal)){last.size=sz;log.push(label(last))}
+  if(/\b(meal|combo)\b/.test(s)&&it.meal&&!last.meal){last.meal=true;last.size=sz||last.size||'Medium';log.push('Made it a meal: '+label(last))}
+  const md=modsIn(s);if(md.length){last.mods.push(...md.filter(x=>!last.mods.includes(x)));log.push(label(last)+': '+md.join(', '))}
+  if(log.length)last.uid=++uidc;else log.push('?');return log}
+ const added=[];let removing=false,pending=[];
+ hits.forEach((h,i)=>{
+  const it=h.it,pre=s.slice(i?hits[i-1].en:0,h.st),post=s.slice(h.en,hits[i+1]?hits[i+1].st:s.length);
+  const seg=pre.split(CONJ).pop(),near=post.split(/\b(?:and|also|plus|then|with a|with an|with)\b/)[0];
+  const prev=added[added.length-1]||null,prevAny=prev||order.lines[order.lines.length-1];
+  const existing=[...order.lines].reverse().find(l=>l.id===it.id);
+  const noQty=!nums(seg.replace(/\b(a|an)\b/g,'')).length;
+  // "a mcflurry oreo" / "a shake chocolate": turn the generic item into the flavoured one
+  if(prev&&/^\s*$/.test(pre)&&((prev.id==='mcflurry'&&/McFlurry/.test(it.name))||(prev.id==='thickshake'&&/Shake$/.test(it.name)))){prev.id=it.id;prev.flav=null;if(it.sized&&!prev.size)prev.size='Medium';prev.uid=++uidc;log.push('→ '+label(prev));return}
+  // sauce used as a change: "no big mac sauce", "extra syrup"
+  if(it.cond&&PRE_MOD.test(pre)){const w=pre.match(PRE_MOD)[1];const v=/no|without|hold/.test(w)?'NO':/less|light/.test(w)?'LIGHT':'EXTRA';const t=v+' '+it.name.toUpperCase();
+   if(hits[i+1]&&/^\s*(on|for|in) (the|that|my|those|his|her|both)\s*$/.test(post)){pending.push(t);return}
+   if(prevAny){prevAny.mods.push(t);prevAny.uid=++uidc;log.push(label(prevAny)+': '+t)}return}
+  // removing: "take the fries off", "cancel the coke and the fries"
+  const rem=REMOVE.test(pre)||/^\s*off\b/.test(post)||(removing&&/^\s*(and|,)?\s*(the|a|an|those|that|my)?\s*$/.test(pre));
+  removing=false;
+  if(rem){removing=true;if(existing){const n=nums(seg.replace(/\b(the|a|an)\b/g,''))[0];if(n&&n<existing.qty){existing.qty-=n;log.push('−'+n+' '+label(existing))}else{order.lines.splice(order.lines.indexOf(existing),1);log.push('Removed '+label(existing))}}else log.push('No '+it.name+' to remove');return}
+  // editing something already on the order: "make the fries large", "no pickles on the big mac"
+  const onThe=/\b(on|for|in|to) (the|that|my|those|his|her|both)\s*$/.test(pre);
+  if(existing&&(CHANGE.test(seg)||onThe)){
+   const sz=sizeIn(near)||sizeIn(seg);if(sz)existing.size=sz;
+   if(/\b(meal|combo)\b/.test(near)&&it.meal){existing.meal=true;existing.size=existing.size||'Medium'}
+   const md=[...pending,...modsIn(onThe?pre:near)];pending=[];existing.mods.push(...md.filter(x=>!existing.mods.includes(x)));existing.uid=++uidc;log.push('Changed '+label(existing)+(md.length?': '+md.join(', '):''));return}
+  // parts of a meal or happy meal: "big mac meal with a coke", "happy meal with nuggets and a fanta"
+  const host=prev&&(prev.meal||BY[prev.id].host)?prev:null;
+  const withW=/\bwith\b/.test(pre),andW=/\band\b/.test(pre);
+  if(host&&noQty){
+   if(it.drink&&!host.drink&&(withW||andW)){const md=[...new Set([...modsIn(seg).filter(x=>/MILK|SHOT|DECAF|SUGAR/.test(x)),...modsIn(near)])];const dz=sizeIn(seg);host.drink=(dz&&it.sized?dz+' ':'')+it.name+(md.length?' ('+md.join(', ').toLowerCase()+')':'');host.uid=++uidc;log.push('Meal drink: '+it.name);return}
+   if(withW&&!it.cond){if(it.id==='fries'&&host.meal){const sz=sizeIn(seg);if(sz)host.size=sz;log.push('Meal fries')}else{host.parts.push(it.name);log.push('Meal: with '+it.name)}host.uid=++uidc;return}
+  }
+  // dipping sauce: "10 nuggets with sweet and sour"
+  if(it.cond&&prev&&noQty&&(withW||(andW&&BY[prev.id].packs))){prev.mods.push('+ '+it.name.toUpperCase());prev.uid=++uidc;log.push(label(prev)+' + '+it.name);return}
+  // a new line
+  const n=nums(seg);let qty=1,pack=null;
+  if(it.packs){const pm=post.match(/^\s*(\d+)\s*(pack|piece|pc|pieces)\b/);const p=n.filter(x=>it.packs.includes(x));
+   if(pm&&it.packs.includes(+pm[1])){pack=+pm[1];if(n.length)qty=n[n.length-1]}
+   else if(p.length){pack=p[p.length-1];const rest=n.slice(0,n.lastIndexOf(pack));qty=rest.length?rest[rest.length-1]:1}
+   else if(n.length)qty=n[n.length-1]}
+  else if(n.length)qty=n[n.length-1];
+  if(qty>50||qty<1)qty=1;
+  const meal=it.meal&&/^\s*(meals?|combos?|value meals?)\b/.test(post);
+  const size=sizeIn(seg)||sizeIn(near.slice(0,16));
+  const flav=it.id==='mcflurry'||it.id==='thickshake'?flavIn(seg+' '+near):null;
+  let mods=[...pending,...modsIn(near+(onThe?' '+pre:''))];pending=[];if(it.drink)mods=[...new Set([...modsIn(seg).filter(x=>/MILK|SHOT|DECAF|SUGAR/.test(x)),...mods])];
+  const l=addLine(order,newLine(it,{qty,size:(it.sized||meal)?size:null,meal,pack,flav,mods}),log);
+  added.push(l);
+ });
+ return log}
+//PARSER-END
+{
+const $=id=>document.getElementById(id);
+let order={lines:[],done:false},num=1,history=[];
+const SAMPLES=['Can I get a Big Mac meal with a Coke No Sugar and a 10 pack of nuggets with sweet and sour','Two cheeseburgers no pickles and a large fries','Actually make the fries small','Take the cheeseburgers off','A large oat flat white two sugars and an Oreo McFlurry','Happy Meal with nuggets and a Fanta',"That's it thanks"];
+$('chips').innerHTML=SAMPLES.map(t=>`<button type="button">${t}</button>`).join('');
+$('chips').addEventListener('click',e=>{if(e.target.tagName==='BUTTON')heard(e.target.textContent)});
+// tap-to-add menu
+const cats=[...new Set(MENU.map(m=>m.cat))];
+$('menuCount').textContent=MENU.length;
+$('menuList').innerHTML=cats.map(c=>`<h4>${c}</h4><div class="mgrid">${MENU.filter(m=>m.cat===c).map(m=>`<button type="button" data-id="${m.id}">${m.name}${m.lto?' <small>LTO</small>':''}</button>`).join('')}</div>`).join('');
+$('menuList').addEventListener('click',e=>{const b=e.target.closest('button[data-id]');if(!b)return;snap();const l=addLine(order,newLine(BY[b.dataset.id],{}),[]);render(l.uid)});
+function sub(l){const it=BY[l.id];const bits=[];if(l.meal)bits.push(l.size+' Fries');if(l.meal||it.host)bits.push(l.drink||'Drink?');bits.push(...l.parts);return bits.length?`<span class="sub">${bits.join(' · ')}</span>`:''}
+function render(newest){
+ $('num').textContent='#'+String(num).padStart(3,'0');
+ $('when').textContent=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+' · Front counter · Voice';
+ const L=order.lines;
+ $('lines').innerHTML=L.length?L.map((l,i)=>`<li class="${l.uid===newest?'new':''}"><span class="q">${l.qty}×</span><span class="n">${label(l).toUpperCase()}${sub(l)}${l.mods.length?`<span class="mods">${l.mods.join(' · ')}</span>`:''}</span><span class="ctl"><button type="button" data-i="${i}" data-d="-1" aria-label="One less">−</button><button type="button" data-i="${i}" data-d="1" aria-label="One more">+</button></span></li>`).join(''):'<li class="empty" style="display:block">Waiting for the customer…</li>';
+ $('count').textContent=L.reduce((a,l)=>a+l.qty,0);
+ $('done').hidden=!order.done;
+}
+$('lines').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;snap();const l=order.lines[+b.dataset.i];l.qty+=+b.dataset.d;if(l.qty<1)order.lines.splice(+b.dataset.i,1);render()});
+function snap(){history.push(JSON.stringify(order));if(history.length>40)history.shift()}
+function heard(text){
+ if(!text.trim())return;snap();
+ const log=apply(text,order);
+ const miss=log.length===1&&log[0]==='?';
+ if(miss)history.pop();
+ const li=document.createElement('li');
+ li.innerHTML=`“${text.replace(/</g,'&lt;')}”<br><span class="${miss?'miss':'act'}">${miss?'Didn’t catch an item. Try again or type it.':log.join(' · ')}</span>`;
+ $('log').prepend(li);
+ render(Math.max(0,...order.lines.map(l=>l.uid)));
+}
+$('typed').addEventListener('submit',e=>{e.preventDefault();heard($('say').value);$('say').value=''});
+$('undo').addEventListener('click',()=>{if(history.length){order=JSON.parse(history.pop());render()}});
+$('next').addEventListener('click',()=>{order={lines:[],done:false};history=[];num++;$('log').innerHTML='';render()});
+$('copy').addEventListener('click',async()=>{const t=order.lines.map(l=>`${l.qty}x ${label(l)}${l.drink?' ('+l.drink+')':''}${l.parts.length?' + '+l.parts.join(', '):''}${l.mods.length?' ['+l.mods.join(', ')+']':''}`).join('\n');try{await navigator.clipboard.writeText(t);$('copy').textContent='Copied'}catch(e){$('copy').textContent='Copy failed'}setTimeout(()=>$('copy').textContent='Copy',1500)});
+
+// ---- microphone + speech ----
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const isAndroid=/Android/i.test(navigator.userAgent);
+const inApp=/; wv\)|FBAN|FBAV|Instagram|Claude/i.test(navigator.userAgent);
+let rec=null,listening=false,lastFinal='',lastFinalAt=0;
+const NATIVE=window.AndroidSpeech||null; // set by the Android app
+function finalText(t){t=(t||'').trim();const now=Date.now();if(t&&!(t===lastFinal&&now-lastFinalAt<3000)){lastFinal=t;lastFinalAt=now;heard(t)}}
+window.onNativeSpeech=(t,isFinal)=>{if(isFinal){finalText(t);$('live').innerHTML='<span class="interim">Listening…</span>'}else $('live').innerHTML=`<span class="interim">${String(t).replace(/</g,'&lt;')}</span>`};
+window.onNativeState=st=>{if(st==='listening'){listening=true;setMic();note('Listening. Speak normally, a phrase at a time.')}
+ else if(st==='stopped'){listening=false;setMic()}
+ else if(st==='denied'){listening=false;setMic();note('Microphone permission was denied. Open Settings → Apps → Order Ear → Permissions → Microphone → Allow.',true)}
+ else if(st.startsWith('error:'))note(st.slice(6),true)};
+function note(msg,bad){$('srNote').innerHTML=msg;$('srNote').classList.toggle('bad',!!bad)}
+function setMic(){$('mic').classList.toggle('on',listening);$('micLabel').textContent=listening?'Stop listening':'Start listening';$('status').textContent=listening?'Listening':'Mic off';$('status').classList.toggle('on',listening)}
+const OPEN_IN_CHROME='Open this page in <b>Chrome</b> (or Edge) using an <b>https://</b> or <b>localhost</b> address. Your mic won’t work in an in-app preview or a file opened from your downloads.';
+if(NATIVE){note('Tap the mic to start. Uses your phone’s speech recognition.')}
+else if(!SR){note('This browser can’t do speech recognition. '+OPEN_IN_CHROME,true)}
+else if(!window.isSecureContext||location.protocol==='content:'){note('The mic is blocked on this page because it isn’t a secure address. '+OPEN_IN_CHROME,true)}
+else if(inApp){note('You look to be inside an app’s built-in viewer. If the mic doesn’t ask for permission, '+OPEN_IN_CHROME.charAt(0).toLowerCase()+OPEN_IN_CHROME.slice(1),true)}
+function makeRec(){
+ rec=new SR();rec.lang='en-AU';rec.interimResults=true;rec.maxAlternatives=1;
+ rec.continuous=!isAndroid; // Android Chrome repeats results in continuous mode, so restart after each phrase instead
+ rec.onresult=e=>{let interim='';for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i],t=r[0].transcript.trim();
+   if(r.isFinal)finalText(t)else interim+=t+' '}
+  $('live').innerHTML=interim?`<span class="interim">${interim.replace(/</g,'&lt;')}</span>`:'<span class="interim">Listening…</span>'};
+ rec.onend=()=>{if(listening)setTimeout(()=>{if(listening)try{rec.start()}catch(e){}},150)};
+ rec.onerror=e=>{const m={'not-allowed':'Microphone permission is blocked. Tap the lock or tune icon next to the address bar → Permissions → Microphone → Allow, then reload.','service-not-allowed':'Speech recognition isn’t allowed here. '+OPEN_IN_CHROME,'audio-capture':'No microphone was found. Check one is plugged in and not used by another app.','network':'Speech recognition needs an internet connection (Chrome sends audio to Google to transcribe it).','language-not-supported':'Australian English isn’t available, switching to US English.'}[e.error];
+  if(e.error==='language-not-supported'){rec.lang='en-US';return}
+  if(e.error==='no-speech'||e.error==='aborted')return;
+  if(m){note(m,true);if(e.error!=='network'){listening=false;setMic()}}};
+}
+async function askMic(){
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){note('This page can’t reach a microphone. '+OPEN_IN_CHROME,true);return false}
+ try{const st=await navigator.mediaDevices.getUserMedia({audio:true});st.getTracks().forEach(t=>t.stop());return true}
+ catch(err){note(err.name==='NotAllowedError'?'Microphone permission was denied. Tap the lock or tune icon next to the address bar → Permissions → Microphone → Allow, then reload.':err.name==='NotFoundError'?'No microphone was found on this device.':'Couldn’t open the microphone ('+err.name+'). '+OPEN_IN_CHROME,true);return false}
+}
+$('mic').addEventListener('click',async()=>{
+ if(NATIVE){if(listening){NATIVE.stop()}else{$('micLabel').textContent='Asking for mic…';NATIVE.start()}return}
+ if(!SR){note('This browser can’t do speech recognition. '+OPEN_IN_CHROME,true);return}
+ if(listening){listening=false;setMic();try{rec.stop()}catch(e){}return}
+ $('micLabel').textContent='Asking for mic…';
+ const ok=await askMic();if(!ok){setMic();return}
+ if(!rec)makeRec();
+ listening=true;setMic();note('Listening. Speak normally, a phrase at a time.');
+ try{rec.start()}catch(e){}
+ $('live').innerHTML='<span class="interim">Listening…</span>';
+});
+render();
+}
+</script>
+</body>
+</html>
