@@ -289,7 +289,33 @@ const BY=Object.fromEntries(MENU.map(m=>[m.id,m]));
 const seenA=new Set();const ALIASES=[];
 for(const it of MENU)for(const t of it.a)if(t&&!seenA.has(t)){seenA.add(t);ALIASES.push({t,it,re:new RegExp('(?<=\\s)'+esc(t).replace(/ /g,'\\s')+'(?:s|es)?(?=\\s)','g')})}
 ALIASES.sort((x,y)=>y.t.length-x.t.length);
-function findItems(s){const taken=[],hits=[];for(const al of ALIASES){al.re.lastIndex=0;let m;while((m=al.re.exec(s))){const st=m.index,en=st+m[0].length;if(taken.some(([x,y])=>st<y&&en>x))continue;taken.push([st,en]);hits.push({it:al.it,st,en})}}return hits.sort((x,y)=>x.st-y.st)}
+// Everyday words that are also menu words ("butter", "fish", "pie", "tea"...). These only count as the
+// menu item when the words around them aren't some other food ("butter chicken", "meat pie", "iced tea").
+const WEAK=new Set(['butter','sauce','fish','pie','pies','tea','cap','capp','cappa','mac','flake','pocket','hash','cone','cones','juice','shake','shakes','wrap','fry','frys','fries','chips','hot chips','french fries','mighty','arch','bundle','raspberry','sparkling','tartar','tartare','ranch','buffalo','mustard','aioli','syrup','maple syrup','bbq','oreo','water','waters','still water','apples','cookies','cookie','frappe','frappes','matcha','chai','wings','wing','chicken wings','cola','flurry','sunday','sundae','lemonade','piccolo','espresso','latte','lattes','mocha','tiramisu','dragonberry','dragon berry','kirks','fanta','fantas','sprite','sprites','coke','cokes','nuggets','nugget','nugs','nuggies','pancakes','hot cake','peppermint','mint tea','deal','mcmuffin','mc muffin','mega meal','home alone','ice cream','soft serve','green apple','golden caramel','energy drink','black coffee','strawberries and cream','tim tam','m and m','m and ms','hotcakes','hot cakes','pops','mcpops','mc pops','slushie','slushy','shortcake','strawberry shortcake','bacon muffin','cheese pocket','pocket','special sauce','tomato sauce','sweet mustard','honey mustard','sweet and sour','sweet n sour','sweet sour','big breakfast','breakfast deal','brekkie deal','breakfast burger','brekkie burger','breakfast wrap','brekkie wrap','fish burger','fish fillet','plain burger','spicy burger','chicken wrap','classic wrap','spicy wrap','mcwrap','mc wrap','flatwhite','americano','juice box','pop tops','pop top','poptops','oj','soda water','redbull','red bull','tea','cup of tea','black tea','normal tea','breakfast tea','green tea','hot choc','chocolate cone','choc cone','twist cone','flake cone','vanilla cone','ice cream cone','birthday cake','ice cream cake','chocolate muffin','choc muffin','apple muffin','apple crumble','banana loaf','fruit toast','banana bread','raisin toast','apple slice','sliced apple','apple pie','apple pies','orange juice','juice']);
+// grammar and order words that never name a food
+const STOP=new Set('a an the and or with also plus then um uhm uh er ah oh like yeah yes yep yup no nah nope ok okay please thanks thank you cheers mate ta can could would will i id im ill ive me my we us our get got gimme give grab have having want wanna need take order ordering just only maybe probably think some of for on in to it its that thats this those these them they there here is are was be am do does did dont doesnt not both each another more less make change swap switch turn instead actually wait hang sorry pardon what whats how hows going good great right fine all everything else anything nothing done will thatll lot today tonight now again same too easy sure perfect correct hey hi hello gday morning afternoon evening drive thru through window food something thing stuff lemme let see um also but so if as at by from up out just one two three four five six seven eight nine ten eleven twelve fifteen twenty thirty forty couple'.split(' '));
+// words that change an order but aren't foods on their own
+const MODW=new Set(('meal meals combo combos value pack packs piece pieces pc small medium regular large smalls mediums larges size sized upsize upsized cold warm fresh plain well cut half strong weak decaf shot shots milk skim skinny soy oat almond lactose free full sugar sugars side sides drink drinks extra light without hold add remove cancel scratch delete off away rid minus drop forget '+ING.replace(/\?/g,'').replace(/\|/g,' ')).split(' '));
+function tokens(s){const out=[],re=/\S+/g;let m;while((m=re.exec(s)))out.push({w:m[0],st:m.index,en:m.index+m[0].length});return out}
+function rawFind(s){const taken=[],hits=[];for(const al of ALIASES){al.re.lastIndex=0;let m;while((m=al.re.exec(s))){const st=m.index,en=st+m[0].length;if(taken.some(([x,y])=>st<y&&en>x))continue;taken.push([st,en]);hits.push({it:al.it,st,en,weak:al.it.cond||WEAK.has(al.t)})}}return hits.sort((x,y)=>x.st-y.st)}
+const isNum=w=>/^\d+$/.test(w)||NUM[w]!=null;
+function findItems(s){const hits=rawFind(s),T=tokens(s);
+ const inHit=t=>hits.some(h=>t.st>=h.st&&t.en<=h.en);
+ const foodish=t=>t&&!inHit(t)&&!STOP.has(t.w)&&!isNum(t.w)&&t.w.length>=3&&!/^(pickles?|onions?|cheese|lettuce|tomato|mayo|bacon|ice|salt|egg|cream|foam|sprinkles)$/.test(t.w);
+ return hits.filter(h=>{if(!h.weak)return true;const i=T.findIndex(t=>t.st>=h.st);let j=-1;T.forEach((t,k)=>{if(t.en<=h.en)j=k});return !(foodish(T[i-1])||foodish(T[j+1]))})}
+// words the customer said that aren't on the menu ("butter chicken", "pizza")
+function unknownPhrases(s){const hits=findItems(s),T=tokens(s);const inHit=t=>hits.some(h=>t.st>=h.st&&t.en<=h.en);
+ const isC=t=>!inHit(t)&&!STOP.has(t.w)&&!MODW.has(t.w)&&!isNum(t.w)&&t.w.length>=3;
+ const groups=[];let cur=null;T.forEach((t,i)=>{if(isC(t)){if(!cur){cur={a:i,b:i};groups.push(cur)}else cur.b=i}else cur=null});
+ const ext=t=>t&&!inHit(t)&&!STOP.has(t.w)&&!isNum(t.w);
+ return groups.map(g=>{let a=g.a,b=g.b;while(ext(T[a-1]))a--;while(ext(T[b+1]))b++;return T.slice(a,b+1).map(t=>t.w).join(' ')}).filter(p=>p.split(' ').length<=4)}
+function lev(a,b){const m=a.length,n=b.length,d=Array.from({length:m+1},(_,i)=>[i]);for(let j=1;j<=n;j++)d[0][j]=j;for(let i=1;i<=m;i++)for(let j=1;j<=n;j++)d[i][j]=Math.min(d[i-1][j]+1,d[i][j-1]+1,d[i-1][j-1]+(a[i-1]===b[j-1]?0:1));return d[m][n]}
+// closest menu items to something we didn't recognise
+function suggestFor(p){const pw=p.split(' ');const seen=new Set(),c=[];
+ for(const it of MENU){if(it.cond||seen.has(it.id))continue;if(it.a.some(a=>{const aw=a.split(' ');return pw.every(w=>aw.includes(w))})){seen.add(it.id);c.push(it)}}
+ if(c.length)return c;
+ let best=null,score=0;for(const al of ALIASES){if(al.t.length<4||al.it.cond)continue;const r=1-lev(p,al.t)/Math.max(p.length,al.t.length);if(r>score){score=r;best=al.it}}
+ return score>=0.78?[best]:[]}
 function nums(str){return str.trim().split(' ').map(w=>/^\d+$/.test(w)?+w:NUM[w]).filter(n=>n!=null)}
 function sizeIn(str){const m=str.match(/\b(smalls?|mediums?|regular|larges?|upsized?)\b/g);return m?SIZES[m[m.length-1]]:null}
 function modsIn(str){const out=[];const re=new RegExp('\\b(no|without|hold the|extra|light|less|add|with extra|more|double|heaps of)\\s+(?:the\\s+|of\\s+)?('+ING+')\\b','g');let m;
@@ -400,17 +426,19 @@ const P={
 const WORDS=['zero','a','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve'];
 function clean(t){return String(t).replace(/&/g,'and').replace(/'N'/gi,'n').replace(/[()]/g,'')}
 function article(t){return /^[aeiou]/i.test(t)?'an':'a'}
+function modWords(m){m=m.replace(/^\+ /,'');return clean(m).toLowerCase().replace(/^(\d) sugar$/,(x,n)=>n==='1'?'one sugar':n+' sugars').replace(/^no whipped butter$/,'no butter').replace(/^no big mac special sauce$/,'no Big Mac sauce')}
 function spoken(l){const it=BY[l.id];let name=clean(it.name);
  if(l.pack)name=l.pack+' piece '+name;
  if(l.flav)name=l.flav+' '+name;
  const size=l.size&&((it.sized&&!l.meal)||(l.meal&&l.size!=='Medium'))?l.size.toLowerCase()+' ':'';
  let txt=size+name+(l.meal?' meal':'');
  if(l.qty>1&&!/s$/i.test(txt)&&!it.drink)txt+='s';
- let out=(l.qty===1?article(txt):(WORDS[l.qty]||String(l.qty)))+' '+txt;
+ const plural=/s$/i.test(name)&&!l.pack&&!/fries$/i.test(name)&&!l.meal;
+ let out=(l.qty===1?(plural?'some':article(txt)):(WORDS[l.qty]||String(l.qty)))+' '+txt;
  if(l.drink)out+=' with '+(/^No drink/.test(l.drink)?'no drink':article(l.drink)+' '+clean(l.drink));
  if(l.parts.length)out+=' with '+l.parts.map(clean).join(' and ');
- const mods=l.mods.map(m=>clean(m.replace(/^\+ /,'with ')).toLowerCase());
- if(mods.length)out+=', '+mods.join(', ');
+ const mods=l.mods.map(modWords);
+ if(mods.length)out+=(l.drink||l.parts.length?', ':' with ')+listJoin(mods);
  return out}
 function listJoin(a){return a.length<2?(a[0]||''):a.slice(0,-1).join(', ')+' and '+a[a.length-1]}
 function readback(){return listJoin(order.lines.map(spoken))}
@@ -463,7 +491,7 @@ function handle(text){
   if(has(/\b(manager|real person|human|speak to someone|talk to someone)\b/)){say('No worries, one of the team will be right with you.');return}
   if(has(/\b(recommend|whats good|specials?|whats new|any deals|deal)\b/)){bot.q='anything';say("The McRib's back for a limited time, or you can't go wrong with a Big Mac meal. What would you like?");return}
   if(q==='finished'){if(has(/\b(thanks|thank you|cheers|ta)\b/))say(fresh(P.bye));return}
-  if(!order.lines.length&&has(/\b(hi|hello|hey|gday|good (morning|afternoon|evening)|can i order|can i get)\b/)&&!has(/\b(no|yes)\b/)){greet();return}
+  if(!order.lines.length&&has(/\b(hi|hello|hey|gday|good (morning|afternoon|evening)|can i order)\b/)&&!has(/\b(no|yes)\b/)&&!unknownPhrases(s).length){greet();return}
   // answers to the question it just asked
   if(q==='upsize'){const L=bot.upLine;if(YESW.test(s)&&!NOW.test(s)){if(L){L.size='Large';L.uid=++uidc;render(L.uid)}say(fresh(P.ack)+" I've made that a large. "+nextQ());return}
    if(NOW.test(s)||FINISHED.test(s)){say(fresh(P.noworries)+' '+nextQ());return}}
@@ -471,6 +499,9 @@ function handle(text){
    if((YESW.test(s)||FINISHED.test(s))&&!NOW.test(s)&&!MORE.test(s)){finish(q==='isthatall');return}
    if(NOW.test(s)||MORE.test(s)){bot.q='anything';bot.askedAll=false;say(q==='confirm'?fresh(["No worries, what would you like to change?","Sorry about that, what should I fix?"]):fresh(['No worries, what else can I get for you?','Sure, what else would you like?']));return}}
   if(q==='anything'&&YESW.test(s)&&!NOW.test(s)&&!FINISHED.test(s)&&order.lines.length){say(fresh(['Sure, what else would you like?','Yep, what else can I get you?','Go for it, what would you like?']));return}
+  if(q==='didyoumean'){const it=BY[bot.suggest];
+   if(it&&YESW.test(s)&&!NOW.test(s)){snap();const l=addLine(order,newLine(it,{qty:bot.suggestQty||1}),[]);render(l.uid);logLine(text,'Added '+label(l));say(fresh(P.ack)+' '+spoken(l)+'. '+nextQ());return}
+   if(NOW.test(s)){bot.q='anything';say(fresh(['No worries. What would you like instead?','All good. What can I get you instead?']));return}}
   if(q==='drink'&&NOW.test(s)){const nd=needDrink();if(nd){nd.drink='No drink';nd.uid=++uidc;render(nd.uid)}say(fresh(['No worries, no drink.','Sure, no drink then.'])+' '+nextQ());return}
  }
  // the answer to "what drink would you like?"
@@ -486,6 +517,7 @@ function handle(text){
  if(miss)history.pop();
  logLine(text,miss?'No order change':log.filter(x=>x!=='Order complete').join(' · '));
  render(Math.max(0,...order.lines.map(l=>l.uid)));
+ const unk=bot.q==='finished'?[]:unknownPhrases(s);
  if(!miss){bot.askedAll=false;let ack;
   const addedLines=touched.filter(l=>log.some(x=>/^(Added|\+\d)/.test(x)&&x.includes(label(l))));
   if(addedLines.length>3)ack=fresh(P.ack)+" I've added those.";
@@ -493,11 +525,21 @@ function handle(text){
   else if(removed&&!touched.length)ack=fresh(P.removed);
   else if(touched.length)ack=fresh(['Sure,','No worries,','Done,'])+" that's "+listJoin(touched.map(spoken))+' now.';
   else ack=fresh(P.noworries);
+  if(unk.length){logLine(text,'Not on the menu: '+unk.join(', '));say(ack+' '+notOnMenu(unk[0],s,true));return}
   say(ack+' '+nextQ());return}
  // nothing changed
  if(order.lines.length&&(q==='anything'||q==='drink'||q===null||q==='upsize')&&(NOW.test(s)||FINISHED.test(s))){confirmOrder();return}
+ if(unk.length){logLine(text,'Not on the menu: '+unk.join(', '));say(notOnMenu(unk[0],s,false));return}
  if(words(text).length>1&&Date.now()-bot.lastSorry>15000){bot.lastSorry=Date.now();say(fresh(P.sorry))}
 }
+function cap(t){return t.charAt(0).toUpperCase()+t.slice(1)}
+// what to say about something that isn't on the menu
+function notOnMenu(p,s,afterAck){const c=suggestFor(p);const names=c.slice(0,3).map(it=>'the '+clean(it.name));
+ if(c.length===1){bot.q='didyoumean';bot.suggest=c[0].id;const n=nums(s.replace(/\b(a|an)\b/g,''));bot.suggestQty=n.length&&n[0]<20?n[0]:1;return (afterAck?'And did':'Sorry, did')+' you mean '+article(c[0].name)+' '+clean(c[0].name)+'?'}
+ bot.q='anything';
+ if(c.length>1&&c.length<=4)return (afterAck?'And for the '+p+", we've got ":"For "+p+", we've got ")+listJoin(names).replace(/ and ([^,]+)$/,' or $1')+'. Which one would you like?';
+ if(c.length>4)return "We've got a few of those, like "+listJoin(names)+'. Which one would you like?';
+ return fresh(["Sorry, we don't have "+p+" on the menu.","Sorry, "+p+" isn't something we do here.","Ah sorry, we don't do "+p+"."])+' '+(order.lines.length?fresh(P.more):'What else can I get for you?')}
 function logLine(text,what){const li=document.createElement('li');li.innerHTML=`“${text.replace(/</g,'&lt;')}”<br><span class="${what==='No order change'?'miss':'act'}">${what.replace(/</g,'&lt;')}</span>`;$('log').prepend(li)}
 const SAMPLES=['Can I get a Big Mac meal with a Coke No Sugar and a 10 pack of nuggets with sweet and sour','Two cheeseburgers no pickles and a large fries','Actually make the fries small','Take the cheeseburgers off','A large oat flat white two sugars and an Oreo McFlurry','Happy Meal with nuggets and a Fanta',"That's it thanks"];
 $('chips').innerHTML=SAMPLES.map(t=>`<button type="button">${t}</button>`).join('');
